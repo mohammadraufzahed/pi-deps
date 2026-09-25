@@ -67,29 +67,61 @@ async function advisoryScan(dir: string, eco: string): Promise<string> {
 	};
 	const lock = join(dir, lockFiles[eco] ?? "");
 	if (!existsSync(lock)) return `(${eco}: no lockfile for advisory scan)`;
-	const pkgs = parseManifest(eco, lock, dir);
+	const pkgs = parseManifest(eco, lock, dir).slice(0, 200);
 	const hits: string[] = [];
-	for (const [name, ver] of pkgs.slice(0, 200)) {
-		const r = await run(
-			"gh",
-			["api", `advisories?ecosystem=${eco}&affects=${name}@${ver}`],
-			dir,
-			30_000,
+	let checked = 0;
+	let rateLimited = false;
+	const isRateLimited = (out: string) =>
+		/\b(403|429)\b|rate limit|API rate limit exceeded/i.test(out);
+	// Batched concurrency — gh -f fields are encoded as query params,
+	// so scoped names like @babel/core survive the affects filter.
+	for (let i = 0; i < pkgs.length && !rateLimited; i += 8) {
+		const batch = pkgs.slice(i, i + 8);
+		const results = await Promise.all(
+			batch.map(([name, ver]) =>
+				run(
+					"gh",
+					[
+						"api",
+						"advisories",
+						"-f",
+						`ecosystem=${eco}`,
+						"-f",
+						`affects=${name}@${ver}`,
+					],
+					dir,
+					30_000,
+				),
+			),
 		);
-		if (r.code === 0 && r.out.trim().startsWith("[")) {
-			try {
-				const advs = JSON.parse(r.out);
-				for (const a of advs) {
-					hits.push(
-						`${a.severity?.toUpperCase() ?? "?"} ${name}@${ver}: ${a.summary ?? a.ghsa_id} → fix: ${(a.vulnerabilities?.[0]?.first_patched_version?.identifier) ?? "?"}`,
-					);
+		for (let j = 0; j < results.length; j++) {
+			const r = results[j];
+			const [name, ver] = batch[j];
+			if (isRateLimited(r.out)) {
+				rateLimited = true;
+				continue;
+			}
+			checked++;
+			if (r.code === 0 && r.out.trim().startsWith("[")) {
+				try {
+					const advs = JSON.parse(r.out);
+					for (const a of advs) {
+						hits.push(
+							`${a.severity?.toUpperCase() ?? "?"} ${name}@${ver}: ${a.summary ?? a.ghsa_id} → fix: ${(a.vulnerabilities?.[0]?.first_patched_version?.identifier) ?? "?"}`,
+						);
+					}
+				} catch {
+					/* non-JSON */
 				}
-			} catch {
-				/* non-JSON */
 			}
 		}
 	}
-	return hits.length ? hits.join("\n") : `(${eco}: clean per Advisory DB)`;
+	const note = rateLimited
+		? ` (rate-limited — checked ${checked}/${pkgs.length} packages)`
+		: "";
+	return hits.length
+		? hits.join("\n") + note
+		: `(${eco}: clean per Advisory DB${note})`;
 }
 
 function parseManifest(
