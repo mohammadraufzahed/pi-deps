@@ -147,9 +147,17 @@ function parseManifest(
 			if (typeof j !== "object" || j === null) return null;
 			const pkgs = j.packages ?? j.dependencies ?? {};
 			if (typeof pkgs !== "object" || pkgs === null) return null;
-			const entries = Object.entries(pkgs)
-				.map(([n, v]: [string, any]) => [n, String(v.version ?? v)])
-				.filter(([, v]) => v && v !== "undefined") as [string, string][];
+			// composer.lock `packages`/`packages-dev` are arrays of {name, version};
+			// npm package-lock `packages`/`dependencies` are keyed maps.
+			const arr: any[] = Array.isArray(pkgs)
+				? [...pkgs, ...(j["packages-dev"] ?? [])]
+				: Object.entries(pkgs).map(([name, v]: [string, any]) => ({
+						name,
+						version: v?.version ?? v,
+					}));
+			const entries = arr
+				.map((p) => [String(p.name ?? ""), String(p.version ?? "")])
+				.filter(([n, v]) => n && v && v !== "undefined") as [string, string][];
 			// An obviously non-empty lockfile yielding zero entries = parse failure.
 			if (entries.length === 0 && src.trim().length > 2) return null;
 			return entries;
@@ -337,7 +345,7 @@ export default function piDeps(pi: ExtensionAPI) {
 			const dir = params.dir ?? ctx.cwd;
 			const ecos = ecosystems(dir);
 			if (!ecos.length)
-				return { content: [{ type: "text" as const, text: `no dependency manifests found in ${dir}` }], details: null };
+				return { details: undefined, content: [{ type: "text" as const, text: `no dependency manifests found in ${dir}` }] };
 			const out: string[] = [];
 			for (const eco of ecos) {
 				out.push(`### ${eco}`);
@@ -363,7 +371,7 @@ export default function piDeps(pi: ExtensionAPI) {
 					out.push(trim(await advisoryScan(dir, eco)));
 				}
 			}
-			return { content: [{ type: "text" as const, text: out.join("\n") }], details: null };
+			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") }] };
 		},
 	});
 
@@ -393,7 +401,7 @@ export default function piDeps(pi: ExtensionAPI) {
 				else r = await run("bundle", ["outdated"], dir);
 				out.push(trim(r.out));
 			}
-			return { content: [{ type: "text" as const, text: out.join("\n") || "(nothing outdated)" }], details: null };
+			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") || "(nothing outdated)" }] };
 		},
 	});
 
@@ -423,7 +431,7 @@ export default function piDeps(pi: ExtensionAPI) {
 					} catch { out.push(trim(r.out)); }
 				}
 			}
-			return { content: [{ type: "text" as const, text: out.join("\n") || "(no manifests)" }], details: null };
+			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") || "(no manifests)" }] };
 		},
 	});
 
@@ -492,7 +500,7 @@ export default function piDeps(pi: ExtensionAPI) {
 			}
 			const diff = await run("git", ["diff", "--stat"], dir);
 			out.push(`\n### changed files\n${trim(diff.out)}`);
-			return { content: [{ type: "text" as const, text: out.join("\n") }], details: null };
+			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") }] };
 		},
 	});
 }
