@@ -135,21 +135,42 @@ async function advisoryScan(dir: string, eco: string): Promise<string> {
  * Returns null when the file exists but could not be parsed — callers
  * must surface that as a warning, never as "clean".
  */
-function parseManifest(
+export function parseManifest(
 	eco: string,
 	lockPath: string,
 	dir: string,
 ): [string, string][] | null {
 	try {
 		const src = readFileSync(lockPath, "utf-8");
-		if (eco === "composer" || eco === "npm") {
+		if (eco === "composer") {
+			const j = JSON.parse(src);
+			// composer.lock: packages / packages-dev are arrays of
+			// {name, version, ...} objects — not keyed maps.
+			const sections = [j.packages, j["packages-dev"]].filter(
+				(s) => Array.isArray(s),
+			);
+			return (sections.flat() as any[])
+				.map((p) => [p?.name, String(p?.version ?? "")])
+				.filter(
+					([n, v]) => n && v && v !== "undefined",
+				) as [string, string][];
+		}
+		if (eco === "npm") {
 			const j = JSON.parse(src);
 			if (typeof j !== "object" || j === null) return null;
 			const pkgs = j.packages ?? j.dependencies ?? {};
 			if (typeof pkgs !== "object" || pkgs === null) return null;
+			// package-lock v2+/v3: packages is a map keyed by path
+			// ("node_modules/foo" → {version}); v1 uses dependencies.
 			const entries = Object.entries(pkgs)
-				.map(([n, v]: [string, any]) => [n, String(v.version ?? v)])
-				.filter(([, v]) => v && v !== "undefined") as [string, string][];
+				.map(([n, v]: [string, any]) => [
+					n.replace(/^.*node_modules\//, ""),
+					String(v.version ?? v),
+				])
+				.filter(([n, v]) => n && v && v !== "undefined") as [
+					string,
+					string,
+				][];
 			// An obviously non-empty lockfile yielding zero entries = parse failure.
 			if (entries.length === 0 && src.trim().length > 2) return null;
 			return entries;
