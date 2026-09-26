@@ -175,11 +175,11 @@ export default function piDeps(pi: ExtensionAPI) {
 		parameters: Type.Object({
 			dir: Type.Optional(Type.String({ description: "project dir (default cwd)" })),
 		}),
-		async execute(_id, params, _s, _u, ctx: { cwd: string }) {
+		async execute(_id, params, _s, _u, ctx) {
 			const dir = params.dir ?? ctx.cwd;
 			const ecos = ecosystems(dir);
 			if (!ecos.length)
-				return { content: [{ type: "text" as const, text: `no dependency manifests found in ${dir}` }] };
+				return { details: undefined, content: [{ type: "text" as const, text: `no dependency manifests found in ${dir}` }] };
 			const out: string[] = [];
 			for (const eco of ecos) {
 				out.push(`### ${eco}`);
@@ -205,7 +205,7 @@ export default function piDeps(pi: ExtensionAPI) {
 					out.push(trim(await advisoryScan(dir, eco)));
 				}
 			}
-			return { content: [{ type: "text" as const, text: out.join("\n") }] };
+			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") }] };
 		},
 	});
 
@@ -216,7 +216,7 @@ export default function piDeps(pi: ExtensionAPI) {
 		parameters: Type.Object({
 			dir: Type.Optional(Type.String()),
 		}),
-		async execute(_id, params, _s, _u, ctx: { cwd: string }) {
+		async execute(_id, params, _s, _u, ctx) {
 			const dir = params.dir ?? ctx.cwd;
 			const ecos = ecosystems(dir);
 			const out: string[] = [];
@@ -235,7 +235,7 @@ export default function piDeps(pi: ExtensionAPI) {
 				else r = await run("bundle", ["outdated"], dir);
 				out.push(trim(r.out));
 			}
-			return { content: [{ type: "text" as const, text: out.join("\n") || "(nothing outdated)" }] };
+			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") || "(nothing outdated)" }] };
 		},
 	});
 
@@ -244,7 +244,7 @@ export default function piDeps(pi: ExtensionAPI) {
 		label: "Deps Licenses",
 		description: "License audit — flag copyleft/GPL in prod deps.",
 		parameters: Type.Object({ dir: Type.Optional(Type.String()) }),
-		async execute(_id, params, _s, _u, ctx: { cwd: string }) {
+		async execute(_id, params, _s, _u, ctx) {
 			const dir = params.dir ?? ctx.cwd;
 			const out: string[] = [];
 			if (existsSync(join(dir, "composer.json"))) {
@@ -265,7 +265,7 @@ export default function piDeps(pi: ExtensionAPI) {
 					} catch { out.push(trim(r.out)); }
 				}
 			}
-			return { content: [{ type: "text" as const, text: out.join("\n") || "(no manifests)" }] };
+			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") || "(no manifests)" }] };
 		},
 	});
 
@@ -279,7 +279,7 @@ export default function piDeps(pi: ExtensionAPI) {
 			scope: Type.Optional(Type.String({ description: "patch|minor (default patch)" })),
 			ecosystem: Type.Optional(Type.String({ description: "composer|npm|pip|..." })),
 		}),
-		async execute(_id, params, _s, _u, ctx: { cwd: string }) {
+		async execute(_id, params, _s, _u, ctx) {
 			const dir = params.dir ?? ctx.cwd;
 			const scope = params.scope ?? "patch";
 			const out: string[] = [];
@@ -298,7 +298,7 @@ export default function piDeps(pi: ExtensionAPI) {
 			}
 			const diff = await run("git", ["diff", "--stat"], dir);
 			out.push(`\n### changed files\n${trim(diff.out)}`);
-			return { content: [{ type: "text" as const, text: out.join("\n") }] };
+			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") }] };
 		},
 	});
 }
