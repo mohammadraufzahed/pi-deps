@@ -337,7 +337,7 @@ export default function piDeps(pi: ExtensionAPI) {
 			const dir = params.dir ?? ctx.cwd;
 			const ecos = ecosystems(dir);
 			if (!ecos.length)
-				return { details: undefined, content: [{ type: "text" as const, text: `no dependency manifests found in ${dir}` }] };
+				return { content: [{ type: "text" as const, text: `no dependency manifests found in ${dir}` }], details: null };
 			const out: string[] = [];
 			for (const eco of ecos) {
 				out.push(`### ${eco}`);
@@ -363,7 +363,7 @@ export default function piDeps(pi: ExtensionAPI) {
 					out.push(trim(await advisoryScan(dir, eco)));
 				}
 			}
-			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") }] };
+			return { content: [{ type: "text" as const, text: out.join("\n") }], details: null };
 		},
 	});
 
@@ -393,7 +393,7 @@ export default function piDeps(pi: ExtensionAPI) {
 				else r = await run("bundle", ["outdated"], dir);
 				out.push(trim(r.out));
 			}
-			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") || "(nothing outdated)" }] };
+			return { content: [{ type: "text" as const, text: out.join("\n") || "(nothing outdated)" }], details: null };
 		},
 	});
 
@@ -423,7 +423,7 @@ export default function piDeps(pi: ExtensionAPI) {
 					} catch { out.push(trim(r.out)); }
 				}
 			}
-			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") || "(no manifests)" }] };
+			return { content: [{ type: "text" as const, text: out.join("\n") || "(no manifests)" }], details: null };
 		},
 	});
 
@@ -492,7 +492,7 @@ export default function piDeps(pi: ExtensionAPI) {
 			}
 			const diff = await run("git", ["diff", "--stat"], dir);
 			out.push(`\n### changed files\n${trim(diff.out)}`);
-			return { details: undefined, content: [{ type: "text" as const, text: out.join("\n") }] };
+			return { content: [{ type: "text" as const, text: out.join("\n") }], details: null };
 		},
 	});
 }
