@@ -25,12 +25,15 @@ function run(
 	args: string[],
 	cwd: string,
 	timeout = 120_000,
-): Promise<{ code: number; out: string }> {
+): Promise<{ code: number; out: string; missing: boolean }> {
 	return new Promise((resolve) => {
 		execFile(cmd, args, { cwd, timeout, maxBuffer: 32 * 1024 * 1024 }, (e, o, er) =>
 			resolve({
-				code: e ? (typeof (e as any).code === "number" ? (e as any).code : 1) : 0,
+				// Spawn failure (ENOENT, signal, killed) sets a non-numeric
+				// code — surface it as 127 and flag `missing`.
+				code: e ? (typeof (e as any).code === "number" ? (e as any).code : 127) : 0,
 				out: String(o ?? "") + (er ? `\n${String(er)}` : ""),
+				missing: e !== null && typeof (e as any).code !== "number",
 			}),
 		);
 	});
@@ -180,7 +183,7 @@ export default function piDeps(pi: ExtensionAPI) {
 			const out: string[] = [];
 			for (const eco of ecos) {
 				out.push(`### ${eco}`);
-				let native: { code: number; out: string } | null = null;
+				let native: { code: number; out: string; missing: boolean } | null = null;
 				if (eco === "composer")
 					native = await run("composer", ["audit", "--format=plain"], dir);
 				else if (eco === "npm")
@@ -193,10 +196,12 @@ export default function piDeps(pi: ExtensionAPI) {
 					native = await run("cargo", ["audit", "--json"], dir);
 				else if (eco === "rubygems")
 					native = await run("bundle", ["audit", "check"], dir);
-				if (native && native.code === 0 && native.out.trim()) {
+				if (native && !native.missing && native.out.trim()) {
+					// Auditors exit nonzero on findings (npm audit, composer
+					// audit, …) — the output IS the report, keep it.
 					out.push(trim(native.out));
 				} else {
-					out.push("(native auditor missing — Advisory DB scan)");
+					out.push("(native auditor unavailable — Advisory DB scan)");
 					out.push(trim(await advisoryScan(dir, eco)));
 				}
 			}
