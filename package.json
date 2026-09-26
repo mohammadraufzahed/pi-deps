@@ -1,1 +1,11 @@
-{"name":"pi-deps","version":"1.0.0","description":"Pi extension: multi-ecosystem dependency auditing — composer/npm/pip/go/rust/rubygems, native auditors + GitHub Advisory DB fallback.","keywords":["pi-package","pi-extension","dependencies","audit","security"],"license":"MIT","repository":"mohammadraufzahed/pi-deps","pi":{"extensions":["./extensions/index.ts"]},"peerDependencies":{"@earendil-works/pi-coding-agent":"*","typebox":"*"}}
+{
+  "name": "pi-deps",
+  "version": "1.0.0",
+  "description": "Pi extension: multi-ecosystem dependency auditing — composer/npm/pip/go/rust/rubygems, native auditors + GitHub Advisory DB fallback.",
+  "keywords": ["pi-package", "pi-extension", "dependencies", "audit", "security"],
+  "license": "MIT",
+  "repository": "mohammadraufzahed/pi-deps",
+  "pi": {"extensions": ["./extensions/index.ts"]},
+  "peerDependencies": {"@earendil-works/pi-coding-agent": "*", "typebox": "*"},
+  "devDependencies": {"@types/node": "^22", "typescript": "^5"}
+}
