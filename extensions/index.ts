@@ -147,9 +147,17 @@ function parseManifest(
 			if (typeof j !== "object" || j === null) return null;
 			const pkgs = j.packages ?? j.dependencies ?? {};
 			if (typeof pkgs !== "object" || pkgs === null) return null;
-			const entries = Object.entries(pkgs)
-				.map(([n, v]: [string, any]) => [n, String(v.version ?? v)])
-				.filter(([, v]) => v && v !== "undefined") as [string, string][];
+			// composer.lock `packages`/`packages-dev` are arrays of {name, version};
+			// npm package-lock `packages`/`dependencies` are keyed maps.
+			const arr: any[] = Array.isArray(pkgs)
+				? [...pkgs, ...(j["packages-dev"] ?? [])]
+				: Object.entries(pkgs).map(([name, v]: [string, any]) => ({
+						name,
+						version: v?.version ?? v,
+					}));
+			const entries = arr
+				.map((p) => [String(p.name ?? ""), String(p.version ?? "")])
+				.filter(([n, v]) => n && v && v !== "undefined") as [string, string][];
 			// An obviously non-empty lockfile yielding zero entries = parse failure.
 			if (entries.length === 0 && src.trim().length > 2) return null;
 			return entries;
