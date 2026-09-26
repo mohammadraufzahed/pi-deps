@@ -70,7 +70,10 @@ async function advisoryScan(dir: string, eco: string): Promise<string> {
 	};
 	const lock = join(dir, lockFiles[eco] ?? "");
 	if (!existsSync(lock)) return `(${eco}: no lockfile for advisory scan)`;
-	const pkgs = parseManifest(eco, lock, dir).slice(0, 200);
+	const parsed = parseManifest(eco, lock, dir);
+	if (parsed === null)
+		return `(${eco}: lockfile unparsable — manual check required; NOT scanned)`;
+	const pkgs = parsed.slice(0, 200);
 	const hits: string[] = [];
 	let checked = 0;
 	let rateLimited = false;
@@ -127,42 +130,54 @@ async function advisoryScan(dir: string, eco: string): Promise<string> {
 		: `(${eco}: clean per Advisory DB${note})`;
 }
 
+/**
+ * Parse a lockfile into [name, version] pairs.
+ * Returns null when the file exists but could not be parsed — callers
+ * must surface that as a warning, never as "clean".
+ */
 function parseManifest(
 	eco: string,
 	lockPath: string,
 	dir: string,
-): [string, string][] {
+): [string, string][] | null {
 	try {
 		const src = readFileSync(lockPath, "utf-8");
 		if (eco === "composer" || eco === "npm") {
 			const j = JSON.parse(src);
+			if (typeof j !== "object" || j === null) return null;
 			const pkgs = j.packages ?? j.dependencies ?? {};
-			return Object.entries(pkgs)
+			if (typeof pkgs !== "object" || pkgs === null) return null;
+			const entries = Object.entries(pkgs)
 				.map(([n, v]: [string, any]) => [n, String(v.version ?? v)])
 				.filter(([, v]) => v && v !== "undefined") as [string, string][];
+			// An obviously non-empty lockfile yielding zero entries = parse failure.
+			if (entries.length === 0 && src.trim().length > 2) return null;
+			return entries;
 		}
 		if (eco === "pip") {
-			return src
+			const pairs = src
 				.split("\n")
 				.map((l) => l.trim().split("=="))
 				.filter((p) => p.length === 2) as [string, string][];
+			return pairs.length || !src.trim() ? pairs : null;
 		}
 		if (eco === "rubygems") {
-			return [...src.matchAll(/^\s{4}(\S+) \(([^)]+)\)/gm)].map((m) => [
-				m[1],
-				m[2],
-			]) as [string, string][];
+			const pairs = [...src.matchAll(/^\s{4}(\S+) \(([^)]+)\)/gm)].map(
+				(m) => [m[1], m[2]] as [string, string],
+			);
+			return pairs.length || !src.trim() ? pairs : null;
 		}
 		if (eco === "go") {
-			return [...src.matchAll(/^\s*(\S+) v(\S+)/gm)].map((m) => [
-				m[1],
-				m[2],
-			]) as [string, string][];
+			const pairs = [...src.matchAll(/^\s*(\S+) v(\S+)/gm)].map(
+				(m) => [m[1], m[2]] as [string, string],
+			);
+			return pairs.length || !src.trim() ? pairs : null;
 		}
 	} catch {
-		/* fallthrough */
+		return null;
 	}
-	return [];
+	// Unknown eco or Gemfile.lock (not yet parsed) — say so, don't fake clean.
+	return null;
 }
 
 /** Parse "1.2.3[-rc.1]" / "v1.2.3" → [major, minor, patch] or null. */
