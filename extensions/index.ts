@@ -165,6 +165,149 @@ function parseManifest(
 	return [];
 }
 
+/** Parse "1.2.3[-rc.1]" / "v1.2.3" → [major, minor, patch] or null. */
+function parseSemver(v: string): [number, number, number] | null {
+	const m = v
+		.trim()
+		.replace(/^v/, "")
+		.match(/^(\d+)\.(\d+)\.(\d+)/);
+	return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function cmpSemver(a: string, b: string): number {
+	const pa = parseSemver(a) ?? [0, 0, 0];
+	const pb = parseSemver(b) ?? [0, 0, 0];
+	for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+	return 0;
+}
+
+/**
+ * Pick the highest candidate version allowed by scope relative to `current`.
+ * scope=patch → same major.minor, higher patch. scope=minor → same major.
+ * Skips prereleases. Returns null when nothing qualifies.
+ */
+function pickTarget(
+	current: string,
+	versions: string[],
+	scope: string,
+): string | null {
+	const cur = parseSemver(current);
+	if (!cur) return null;
+	const allowed = versions.filter((v) => {
+		const p = parseSemver(v);
+		if (!p || v.includes("-")) return false;
+		if (scope === "patch")
+			return p[0] === cur[0] && p[1] === cur[1] && p[2] > cur[2];
+		return p[0] === cur[0] && (p[1] > cur[1] || (p[1] === cur[1] && p[2] > cur[2]));
+	});
+	return allowed.sort(cmpSemver).pop() ?? null;
+}
+
+interface Outdated {
+	name: string;
+	current: string;
+	latest: string;
+}
+
+/** npm outdated --json — exit code is nonzero when updates exist; parse anyway. */
+async function npmOutdated(dir: string): Promise<Outdated[]> {
+	const r = await run("npm", ["outdated", "--json"], dir, 60_000);
+	let j: Record<string, { current?: string; latest?: string }> = {};
+	try {
+		j = JSON.parse(r.out);
+	} catch {
+		return [];
+	}
+	// Only direct deps — installing a transitive name would add it to package.json.
+	let direct: Set<string> | null = null;
+	try {
+		const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8"));
+		direct = new Set([
+			...Object.keys(pkg.dependencies ?? {}),
+			...Object.keys(pkg.devDependencies ?? {}),
+		]);
+	} catch {
+		/* keep all */
+	}
+	return Object.entries(j)
+		.filter(([n, v]) => v.current && v.latest && (!direct || direct.has(n)))
+		.map(([name, v]) => ({ name, current: v.current!, latest: v.latest! }));
+}
+
+/** composer outdated --direct --format=json */
+async function composerOutdated(dir: string): Promise<Outdated[]> {
+	const r = await run(
+		"composer",
+		["outdated", "--direct", "--format=json"],
+		dir,
+		60_000,
+	);
+	try {
+		const j = JSON.parse(r.out);
+		const list = (j.installed ?? j.locked ?? []) as {
+			name: string;
+			version?: string;
+			latest?: string;
+		}[];
+		return list
+			.filter((p) => p.version && p.latest)
+			.map((p) => ({ name: p.name, current: p.version!, latest: p.latest! }));
+	} catch {
+		return [];
+	}
+}
+
+/** All published versions for a package (used when `latest` is out of scope). */
+async function allVersions(
+	eco: string,
+	dir: string,
+	name: string,
+): Promise<string[]> {
+	if (eco === "npm") {
+		const r = await run("npm", ["view", name, "versions", "--json"], dir, 60_000);
+		try {
+			const j = JSON.parse(r.out);
+			return Array.isArray(j) ? j.map(String) : [String(j)];
+		} catch {
+			return [];
+		}
+	}
+	if (eco === "composer") {
+		const r = await run("composer", ["show", "--all", name], dir, 60_000);
+		const m = r.out.match(/versions\s*:\s*(.+)/);
+		if (!m) return [];
+		return m[1]
+			.split(",")
+			.map((s) => s.trim().replace(/^[*]\s*/, ""))
+			.filter(Boolean);
+	}
+	return [];
+}
+
+/** Per-package in-scope update targets for composer/npm. */
+async function updateTargets(
+	eco: string,
+	dir: string,
+	scope: string,
+): Promise<{ name: string; current: string; target: string }[]> {
+	const outdated =
+		eco === "npm"
+			? await npmOutdated(dir)
+			: eco === "composer"
+				? await composerOutdated(dir)
+				: [];
+	const targets: { name: string; current: string; target: string }[] = [];
+	for (const p of outdated) {
+		let target = pickTarget(p.current, [p.latest], scope);
+		if (!target) {
+			const versions = await allVersions(eco, dir, p.name);
+			target = pickTarget(p.current, versions, scope);
+		}
+		if (target) targets.push({ name: p.name, current: p.current, target });
+	}
+	return targets;
+}
+
 export default function piDeps(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "deps_audit",
@@ -281,17 +424,53 @@ export default function piDeps(pi: ExtensionAPI) {
 		}),
 		async execute(_id, params, _s, _u, ctx) {
 			const dir = params.dir ?? ctx.cwd;
-			const scope = params.scope ?? "patch";
+			const scope = params.scope === "minor" ? "minor" : "patch";
 			const out: string[] = [];
 			const ecos = params.ecosystem ? [params.ecosystem] : ecosystems(dir);
 			for (const eco of ecos) {
 				if (eco === "composer") {
-					const lvl = scope === "minor" ? ["--with-all-dependencies"] : [];
-					const r = await run("composer", ["update", "--prefer-stable", "--with-dependencies", ...lvl], dir, 300_000);
-					out.push(`### composer update\n${trim(r.out)}`);
+					const targets = await updateTargets("composer", dir, scope);
+					if (!targets.length) {
+						out.push(`### composer — nothing updatable within scope=${scope}`);
+					} else {
+						out.push(
+							`### composer targets (${scope})\n` +
+								targets.map((t) => `${t.name}: ${t.current} → ${t.target}`).join("\n"),
+						);
+						// --with is a temporary constraint: bumps only to the picked
+						// version without rewriting composer.json ranges.
+						const args = ["update", "--prefer-stable", "--with-dependencies"];
+						for (const t of targets) args.push("--with", `${t.name}:${t.target}`);
+						args.push(...targets.map((t) => t.name));
+						const r = await run("composer", args, dir, 300_000);
+						out.push(`### composer update\n${trim(r.out)}`);
+					}
 				} else if (eco === "npm") {
-					const r = await run("npm", ["update"], dir, 300_000);
-					out.push(`### npm update\n${trim(r.out)}`);
+					const targets = await updateTargets("npm", dir, scope);
+					if (!targets.length) {
+						out.push(`### npm — nothing updatable within scope=${scope}`);
+					} else {
+						out.push(
+							`### npm targets (${scope})\n` +
+								targets.map((t) => `${t.name}: ${t.current} → ${t.target}`).join("\n"),
+						);
+						// patch scope → tilde prefix keeps future resolution patch-only;
+						// minor scope → caret allows minors, still blocks majors.
+						const prefix = scope === "patch" ? "~" : "^";
+						const r = await run(
+							"npm",
+							[
+								"install",
+								`--save-prefix=${prefix}`,
+								"--no-audit",
+								"--no-fund",
+								...targets.map((t) => `${t.name}@${t.target}`),
+							],
+							dir,
+							300_000,
+						);
+						out.push(`### npm install\n${trim(r.out)}`);
+					}
 				} else {
 					out.push(`(${eco}: manual update — audit first, bump targeted packages)`);
 				}
