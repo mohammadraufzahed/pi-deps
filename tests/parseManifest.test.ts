@@ -43,6 +43,14 @@ describe("parseManifest — composer.lock", () => {
 		assert.ok(pkgs.every(([n]) => !/^\d+$/.test(n)));
 	});
 
+	it("returns null when no package sections are arrays (fake-clean guard)", () => {
+		const { dir, lock } = tmpLock(
+			"composer.lock",
+			JSON.stringify({ packages: { "a/b": "0.1.0" } }),
+		);
+		assert.equal(parseManifest("composer", lock, dir), null);
+	});
+
 	it("tolerates missing packages-dev", () => {
 		const { dir, lock } = tmpLock(
 			"composer.lock",

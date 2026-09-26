@@ -149,6 +149,9 @@ export function parseManifest(
 			const sections = [j.packages, j["packages-dev"]].filter(
 				(s) => Array.isArray(s),
 			);
+			// A lockfile that parsed but has no package sections is
+			// a parse failure — returning [] would report a fake-clean.
+			if (sections.length === 0) return null;
 			return (sections.flat() as any[])
 				.map((p) => [p?.name, String(p?.version ?? "")])
 				.filter(
